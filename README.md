@@ -1,5 +1,12 @@
 # Lexaloud
 
+> **This is a personal fork.** The original project is
+> [Gustavjiversen01/lexaloud](https://github.com/Gustavjiversen01/lexaloud) by
+> Gustav Jes Iversen (MIT). My changes live on the `local-patches` branch, on
+> top of upstream commit `5d089a8`. They are patches for my own setup, not
+> something I have sent to or agreed with upstream. What I changed and why is
+> in [What differs from upstream](#what-differs-from-upstream).
+
 > A local, private text-to-speech tool for Linux. Select text, press a
 > hotkey, hear it read by a neural voice running on your own machine.
 
@@ -25,6 +32,41 @@ cloud API, no account, no telemetry.
 
 To hear what Kokoro sounds like before installing, try the
 [live demo on Hugging Face](https://huggingface.co/spaces/hexgrad/Kokoro-TTS).
+
+## What differs from upstream
+
+I forked this for two reasons: I already run a Kokoro TTS server for other
+tools, so a second copy of the model inside Lexaloud was wasted disk and RAM,
+and I wanted an offsite copy of my patches I can recover from. Everything below
+is on the `local-patches` branch.
+
+**Speech backend.** Lexaloud no longer loads Kokoro itself. A new
+`KokoroHttpProvider` sends each sentence to an OpenAI-compatible
+`/v1/audio/speech` server (default `http://127.0.0.1:8880/v1/audio/speech`,
+configurable under `[provider]` in `config.toml`). The endpoint must be a
+literal loopback IP address, enforced in `config.py`, so selected text cannot be
+pointed at a remote host.
+
+**Removed:**
+- the bundled `kokoro-onnx` model path and `onnxruntime` / CUDA packages
+- the model downloader, its SHA256 pins and the ONNX environment guard
+  (`models.py` is reduced to the optional LLM-normalizer download)
+- the optional Speech Rule Engine LaTeX-to-speech stage
+- the installer's `--backend` and `--with-math-speech` options
+- the tests for all of the above
+
+**Changed:**
+- `setup` refuses to install packages without the hash-pinned lockfile; the
+  unpinned fallback is gone
+- the installer only requires `xclip` on X11 sessions (Wayland uses `wl-paste`)
+- the systemd unit template drops `After=default.target`
+- the overlay is restyled: a larger bar (900x140), amber colours and text that
+  wraps to two lines
+- the tests follow the code: 418 pass, 3 skipped
+
+**Not verified:** the installer's lockfile filter and the pinned
+`pydantic_core` have not been run on a fresh install, and this fork is not
+tracked against upstream, so upstream fixes will not appear here on their own.
 
 ## Features
 
@@ -121,16 +163,6 @@ The installer auto-detects your distro via `/etc/os-release` and prints
 the right package names if any are missing. For distros not in the table,
 file a PR against [`docs/install/`](docs/install/).
 
-### GPU backend
-
-The installer detects NVIDIA via `nvidia-smi` and picks the right
-lockfile automatically. To force a backend:
-
-```bash
-./scripts/install.sh --backend cuda12   # NVIDIA GPU
-./scripts/install.sh --backend cpu      # CPU only (AMD, Intel, or no GPU)
-```
-
 ### Wayland users: read this
 
 On GNOME Wayland (the default on Ubuntu 24.04), `speak-selection` may
@@ -190,8 +222,6 @@ sentence replace the content with a SHA-1 fingerprint + length, so
 
 ## Known limitations (v0.3.0)
 
-- **NVIDIA only for GPU acceleration** — AMD ROCm and Intel Arc are
-  not supported. CPU fallback works on any x86_64 Linux.
 - **No karaoke word-level highlighting** — deferred (Kokoro doesn't
   expose word timings).
 - **No browser extension** — deferred.

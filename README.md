@@ -17,9 +17,10 @@
 2. **Press a global hotkey** (e.g., `Ctrl+0`)
 3. **Hear it spoken** sentence by sentence, with pause / skip / rewind controls
 
-Lexaloud runs a small daemon on your machine that synthesizes speech
-using [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), an
-open-weights neural voice model. Nothing leaves your computer — no
+Lexaloud runs a small daemon on your machine and sends each sentence to your
+own OpenAI-compatible [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
+server. By default that is `http://127.0.0.1:8880/v1/audio/speech`; no model
+is downloaded or loaded by Lexaloud itself. Nothing leaves your computer — no
 cloud API, no account, no telemetry.
 
 To hear what Kokoro sounds like before installing, try the
@@ -44,9 +45,8 @@ To hear what Kokoro sounds like before installing, try the
   binding on KDE Plasma 6+, Sway, and Hyprland via the
   `org.freedesktop.portal.GlobalShortcuts` portal. GNOME does not
   support this portal and continues using the gsettings path.
-- **GPU-accelerated neural TTS** — Kokoro-82M via `kokoro-onnx` on
-  `onnxruntime-gpu` with NVIDIA CUDA. CPU fallback runs at ~10x
-  real-time, which is fine for reading along.
+- **Local-server neural TTS** — uses your own OpenAI-compatible Kokoro
+  endpoint; the server controls its GPU/CPU runtime.
 - **Sentence-granularity streaming** with bounded backpressure and
   cooperative cancellation. Pause, skip, rewind, or stop mid-article
   without audio clipping.
@@ -68,9 +68,9 @@ To hear what Kokoro sounds like before installing, try the
 | **OS** | Linux only. Tier 1: Ubuntu 24.04, Debian 13. Tier 2: Fedora 41, Arch, Mint, Pop!_OS. Not supported: Windows, macOS. |
 | **Init system** | systemd (for the `--user` daemon unit). Non-systemd distros (Artix, Void) can run `lexaloud daemon` manually. |
 | **Python** | 3.11 or newer |
-| **GPU (optional)** | NVIDIA with CUDA 12-compatible driver. AMD ROCm and Intel Arc are **not yet supported** — the daemon falls back to CPU, which runs at ~10x real-time and is fine for reading along. |
+| **TTS server** | An OpenAI-compatible Kokoro server reachable at `http://127.0.0.1:8880/v1/audio/speech`, or a replacement URL in `[provider] endpoint`. |
 | **Audio** | PipeWire, PulseAudio, or bare ALSA (via PortAudio/`libportaudio2`). Most desktop Linux distros ship PipeWire by default. |
-| **Disk** | ~400 MB for model weights (downloaded once on first setup) |
+| **Disk** | No Kokoro model storage required by Lexaloud |
 | **Desktop (optional)** | GNOME for the integrated tray + hotkey UI. KDE, Sway, XFCE, Cinnamon, and others work via manual hotkey binding — see [`docs/hotkeys/`](docs/hotkeys/). The CLI works headless. |
 
 ## Install
@@ -147,13 +147,9 @@ bind both to different keys. Details in
 
 ### Not via `pip install`
 
-`pip install lexaloud` does **not** give you a working installation.
-The TTS runtime requires a specific install sequence for `kokoro-onnx`
-+ `onnxruntime-gpu` that `pip` cannot express in one command (the two
-packages share an internal directory and silently break each other if
-both are installed normally — see
-[`docs/design-rationale.md`](docs/design-rationale.md) for the full
-story). `scripts/install.sh` is the only supported install path.
+`scripts/install.sh` remains the supported installation path because it also
+creates the systemd user service and installs the pinned application runtime.
+Ensure your local Kokoro server is running before starting the daemon.
 
 ## CLI
 
@@ -167,7 +163,6 @@ lexaloud skip                 # skip the current sentence
 lexaloud back                 # rewind one sentence
 lexaloud stop                 # stop and clear the queue
 lexaloud status               # daemon state as JSON
-lexaloud download-models      # fetch model weights (~340 MB, once)
 lexaloud setup                # first-time configuration walkthrough
 lexaloud bug-report           # system diagnostics for filing issues
 lexaloud daemon               # run the daemon (normally via systemd)
@@ -180,12 +175,9 @@ Full reference: [`docs/cli-reference.md`](docs/cli-reference.md)
 
 ## Privacy
 
-**Lexaloud performs no telemetry.** No text, metadata, or usage
-statistics are transmitted anywhere. The only outbound network calls
-are the one-time model downloads on first setup, fetched over HTTPS
-from the [`kokoro-onnx`](https://github.com/thewh1teagle/kokoro-onnx)
-GitHub releases page and SHA256-verified against pins in
-[`src/lexaloud/models.py`](src/lexaloud/models.py).
+**Lexaloud performs no telemetry.** No text, metadata, or usage statistics
+are transmitted anywhere except the configured local Kokoro server, which
+receives the sentence being spoken. The default endpoint is loopback-only.
 
 The daemon listens on a **Unix domain socket** at
 `$XDG_RUNTIME_DIR/lexaloud/lexaloud.sock` (mode 0700 enforced by

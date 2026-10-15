@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 from lexaloud.setup import (
     _check_and_install_runtime_deps,
-    _detect_backend,
     _detect_repo_root,
     _hotkey_walkthrough,
     _install_missing_deps,
@@ -153,37 +152,6 @@ def test_detect_repo_root_finds_editable_install():
     assert any(root.glob("requirements-lock.*.txt"))
 
 
-def test_detect_backend_gpu_when_onnxruntime_gpu_installed(monkeypatch):
-    import lexaloud.setup as setup_mod
-
-    # onnxruntime module spec is present (importable)
-    class _DummySpec:
-        pass
-
-    monkeypatch.setattr(
-        setup_mod.importlib.util,
-        "find_spec",
-        lambda name: _DummySpec() if name == "onnxruntime" else None,
-    )
-    # Dist metadata says onnxruntime-gpu IS installed
-    import importlib.metadata as md
-
-    def _version(name: str):
-        if name == "onnxruntime-gpu":
-            return "1.24.4"
-        raise md.PackageNotFoundError(name)
-
-    monkeypatch.setattr(md, "version", _version)
-    assert _detect_backend() == "cuda12"
-
-
-def test_detect_backend_cpu_when_onnxruntime_missing(monkeypatch):
-    import lexaloud.setup as setup_mod
-
-    monkeypatch.setattr(setup_mod.importlib.util, "find_spec", lambda name: None)
-    assert _detect_backend() == "cpu"
-
-
 def test_install_missing_deps_noop_for_empty_list(tmp_path):
     """Empty package list returns 0 without touching pip."""
     fake_pip = tmp_path / "pip"
@@ -242,77 +210,6 @@ def test_install_missing_deps_hash_verified_path(tmp_path, monkeypatch):
     assert captured["env_clean"] is True
 
 
-def test_install_missing_deps_falls_back_when_no_lockfile(tmp_path, monkeypatch):
-    """Without a reachable lockfile, pip is invoked without hash pinning."""
-    import lexaloud.setup as setup_mod
-
-    fake_pip = tmp_path / "pip"
-    fake_pip.write_text("")
-    fake_pip.chmod(0o755)
-
-    # Simulate a non-editable install: _detect_repo_root returns None.
-    monkeypatch.setattr(setup_mod, "_detect_repo_root", lambda: None)
-
-    captured: dict = {}
-
-    def _fake_run(cmd, *, env, check, timeout=None):
-        captured["cmd"] = cmd
-
-        class _Result:
-            returncode = 0
-
-        return _Result()
-
-    monkeypatch.setattr(setup_mod.subprocess, "run", _fake_run)
-
-    rc = _install_missing_deps(
-        ["markdown-it-py"],
-        venv_pip=fake_pip,
-        backend="cpu",
-    )
-    assert rc == 0
-    assert "--require-hashes" not in captured["cmd"]
-    assert "markdown-it-py" in captured["cmd"]
-
-
-def test_install_missing_deps_falls_back_when_hashed_install_fails(tmp_path, monkeypatch):
-    """If hash-verified install fails, fall through to an unhashed retry."""
-    import lexaloud.setup as setup_mod
-
-    fake_pip = tmp_path / "pip"
-    fake_pip.write_text("")
-    fake_pip.chmod(0o755)
-
-    fake_repo = tmp_path / "repo"
-    fake_repo.mkdir()
-    (fake_repo / "pyproject.toml").write_text("")
-    (fake_repo / "requirements-lock.cpu.txt").write_text("")
-
-    calls: list[list[str]] = []
-
-    def _fake_run(cmd, *, env, check, timeout=None):
-        calls.append(list(cmd))
-
-        class _Result:
-            # First call (hashed) fails; second call (unhashed) succeeds
-            returncode = 1 if "--require-hashes" in cmd else 0
-
-        return _Result()
-
-    monkeypatch.setattr(setup_mod.subprocess, "run", _fake_run)
-
-    rc = _install_missing_deps(
-        ["markdown-it-py"],
-        venv_pip=fake_pip,
-        repo_root=fake_repo,
-        backend="cpu",
-    )
-    assert rc == 0
-    assert len(calls) == 2
-    assert "--require-hashes" in calls[0]
-    assert "--require-hashes" not in calls[1]
-
-
 def test_check_and_install_no_op_when_deps_present(monkeypatch):
     """If nothing is missing, the wrapper short-circuits without spawning pip."""
     import lexaloud.setup as setup_mod
@@ -340,16 +237,21 @@ def test_install_missing_deps_timeout_graceful(tmp_path, monkeypatch, capsys):
     fake_pip.write_text("")
     fake_pip.chmod(0o755)
 
-    # Force the fallback (no lockfile) path so there's exactly one
-    # subprocess.run invocation to mock.
-    monkeypatch.setattr(setup_mod, "_detect_repo_root", lambda: None)
+    fake_repo = tmp_path / "repo"
+    fake_repo.mkdir()
+    (fake_repo / "requirements-lock.cpu.txt").write_text("")
 
     def _timeout(cmd, **kw):
         raise real_subprocess.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout", 0))
 
     monkeypatch.setattr(setup_mod.subprocess, "run", _timeout)
 
-    rc = _install_missing_deps(["markdown-it-py"], venv_pip=fake_pip)
+    rc = _install_missing_deps(
+        ["markdown-it-py"],
+        venv_pip=fake_pip,
+        repo_root=fake_repo,
+        backend="cpu",
+    )
     assert rc == 1
     err = capsys.readouterr().err
     assert "timed out" in err

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lexaloud.config import Config, load_config
+import pytest
+
+from lexaloud.config import Config, load_config, validate_local_tts_endpoint
 
 
 def test_load_config_missing_file_returns_defaults(tmp_path: Path):
@@ -13,6 +15,9 @@ def test_load_config_missing_file_returns_defaults(tmp_path: Path):
     assert cfg.capture.max_bytes == 200 * 1024
     assert cfg.daemon.host == "127.0.0.1"
     assert cfg.daemon.port == 5487
+    assert cfg.provider.endpoint == "http://127.0.0.1:8880/v1/audio/speech"
+    assert cfg.provider.model == "kokoro"
+    assert cfg.provider.timeout_s == 60.0
     assert cfg.provider.voice == "af_heart"
     assert cfg.provider.lang == "en-us"
     assert cfg.provider.speed == 1.0
@@ -93,3 +98,14 @@ subprocess_timeout_s = 5.0
     cfg = load_config(path)
     assert cfg.capture.max_bytes == 1000
     assert cfg.capture.subprocess_timeout_s == 5.0
+
+
+def test_validate_local_tts_endpoint_accepts_ipv4_and_ipv6_loopback():
+    assert validate_local_tts_endpoint("http://127.0.0.1:8880/v1/audio/speech")
+    assert validate_local_tts_endpoint("http://[::1]:8880/v1/audio/speech")
+
+
+@pytest.mark.parametrize("endpoint", ["http://localhost:8880", "https://127.0.0.1", "http://10.0.0.1"])
+def test_validate_local_tts_endpoint_rejects_non_loopback_or_hostname(endpoint: str):
+    with pytest.raises(ValueError, match="literal loopback"):
+        validate_local_tts_endpoint(endpoint)

@@ -10,9 +10,40 @@ import logging
 import os
 import tomllib
 from dataclasses import dataclass, field
+from ipaddress import ip_address
 from pathlib import Path
+from urllib.parse import urlsplit
 
 log = logging.getLogger(__name__)
+
+
+def validate_local_tts_endpoint(endpoint: str) -> str:
+    """Accept only literal loopback HTTP endpoints.
+
+    Hostnames are deliberately rejected: their DNS or hosts-file mapping can
+    change after validation. A loopback IP literal keeps selected text on the
+    machine even when proxy settings or local name resolution are hostile.
+    """
+    try:
+        parsed = urlsplit(endpoint)
+        host = parsed.hostname
+        address = ip_address(host) if host is not None else None
+    except ValueError as e:
+        raise ValueError("provider.endpoint must be a valid literal loopback HTTP URL") from e
+    if (
+        parsed.scheme != "http"
+        or address is None
+        or not address.is_loopback
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "provider.endpoint must be a literal loopback HTTP URL, such as "
+            "http://127.0.0.1:8880/v1/audio/speech"
+        )
+    return endpoint
 
 
 def config_path() -> Path:
@@ -85,10 +116,15 @@ class AdvancedConfig:
 
 @dataclass
 class ProviderConfig:
+    # OpenAI-compatible local Kokoro service. Lexaloud sends one request per
+    # sentence and asks for a WAV response for direct playback.
+    endpoint: str = "http://127.0.0.1:8880/v1/audio/speech"
+    model: str = "kokoro"
+    timeout_s: float = 60.0
     voice: str = "af_heart"
     lang: str = "en-us"
     # Playback speed multiplier. 1.0 = normal; >1 faster; <1 slower.
-    # Kokoro natively supports this; it's passed to Kokoro.create(speed=...).
+    # Passed to the local Kokoro server as the OpenAI-compatible speed field.
     # Safe range for dense academic prose is ~0.85-1.3 per the design plan;
     # values outside that are tolerated but may hurt comprehension.
     speed: float = 1.0
@@ -106,21 +142,6 @@ class PreprocessorCfg:
     normalize_urls: bool = True
     normalize_math_symbols: bool = True
     pdf_cleanup: bool = True
-
-
-@dataclass
-class SreLatexConfig:
-    """Speech Rule Engine LaTeX-to-speech bridge. Optional; off by default.
-
-    Requires Node.js ≥18 and ``speech-rule-engine@4.1.3`` installed via
-    ``scripts/install.sh --with-math-speech``. When the ``sre`` binary
-    is not resolvable the preprocessor stage is a no-op.
-    """
-
-    enabled: bool = False
-    timeout_s: float = 10.0
-    domain: str = "clearspeak"  # "clearspeak" or "mathspeak"
-    style: str = ""  # empty string = omit -s flag
 
 
 @dataclass
@@ -147,7 +168,6 @@ class Config:
     preprocessor: PreprocessorCfg = field(default_factory=PreprocessorCfg)
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
     normalizer: NormalizerConfig = field(default_factory=NormalizerConfig)
-    sre_latex: SreLatexConfig = field(default_factory=SreLatexConfig)
 
 
 _NESTED_TYPES = (
@@ -157,7 +177,6 @@ _NESTED_TYPES = (
     PreprocessorCfg,
     AdvancedConfig,
     NormalizerConfig,
-    SreLatexConfig,
 )
 
 
@@ -210,6 +229,4 @@ def load_config(path: Path | None = None) -> Config:
         _merge(cfg.advanced, data["advanced"])
     if isinstance(data.get("normalizer"), dict):
         _merge(cfg.normalizer, data["normalizer"])
-    if isinstance(data.get("sre_latex"), dict):
-        _merge(cfg.sre_latex, data["sre_latex"])
     return cfg

@@ -7,7 +7,7 @@ Responsibilities:
    (falling back to `sys.executable`'s directory). Print it prominently —
    it's what the user pastes into GNOME Custom Shortcuts and into the
    systemd unit.
-2. Run `lexaloud download-models` (idempotent).
+2. Confirm the configured external Kokoro endpoint for the user.
 3. Detect session type and print the hotkey-binding walkthrough.
 4. Render a systemd `--user` unit file to
    `~/.config/systemd/user/lexaloud.service`. Does NOT overwrite existing
@@ -28,7 +28,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from .cli import EXIT_GENERIC_ERROR, EXIT_OK
-from .models import default_cache_dir, ensure_artifacts
+from .config import load_config
 from .session import detect_session
 
 # Pip install timeout. Generous enough for a slow connection to fetch
@@ -87,25 +87,6 @@ def _detect_repo_root() -> Path | None:
     return None
 
 
-def _detect_backend() -> str:
-    """Return "cuda12" if onnxruntime-gpu is installed, else "cpu".
-
-    Used to pick the right ``requirements-lock.*.txt`` as a constraints
-    file for hash-verified installs of missing deps.
-    """
-    if importlib.util.find_spec("onnxruntime") is not None:
-        # Both distributions register as the ``onnxruntime`` module.
-        # Distinguish via dist metadata.
-        try:
-            import importlib.metadata as md
-
-            md.version("onnxruntime-gpu")
-            return "cuda12"
-        except md.PackageNotFoundError:
-            return "cpu"
-    return "cpu"
-
-
 def _install_missing_deps(
     packages: list[str],
     *,
@@ -115,11 +96,8 @@ def _install_missing_deps(
 ) -> int:
     """Install missing runtime deps into the current venv.
 
-    Prefers ``--require-hashes`` with the repo's lockfile as a
-    constraints file when we're running from an editable install (the
-    lockfile pins every package with wheel + sdist SHA-256 hashes).
-    Falls back to an unhashed ``pip install <pkg>`` with a printed
-    warning when no lockfile is reachable (e.g. site-packages install).
+    Requires ``--require-hashes`` and the repository lockfile. Setup refuses
+    to fetch packages when that trusted pin set is unavailable.
 
     Returns 0 on success, non-zero on failure.
     """
@@ -140,7 +118,7 @@ def _install_missing_deps(
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
 
     root = repo_root if repo_root is not None else _detect_repo_root()
-    back = backend if backend is not None else _detect_backend()
+    back = backend if backend is not None else "cpu"
 
     def _timeout_msg() -> str:
         return (
@@ -149,36 +127,23 @@ def _install_missing_deps(
             f"{pip_bin} install {' '.join(packages)}"
         )
 
-    if root is not None:
-        lockfile = root / f"requirements-lock.{back}.txt"
-        if lockfile.is_file():
-            print(f"  using lockfile constraints: {lockfile.name}")
-            cmd = [
-                str(pip_bin),
-                "install",
-                "--require-hashes",
-                "--constraint",
-                str(lockfile),
-                *packages,
-            ]
-            try:
-                proc = subprocess.run(cmd, env=env, check=False, timeout=_PIP_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                print(_timeout_msg(), file=sys.stderr)
-                return 1
-            except OSError as e:
-                print(f"  pip invocation failed: {e}", file=sys.stderr)
-                return 1
-            if proc.returncode == 0:
-                return 0
-            print(
-                "  hash-verified install failed — falling back to unhashed install",
-                file=sys.stderr,
-            )
+    if root is None:
+        print("  ERROR: no repository lockfile is available; refusing unpinned install.", file=sys.stderr)
+        return 1
+    lockfile = root / f"requirements-lock.{back}.txt"
+    if not lockfile.is_file():
+        print(f"  ERROR: lockfile not found: {lockfile}; refusing unpinned install.", file=sys.stderr)
+        return 1
 
-    # Fallback: plain pip install. Lose supply-chain integrity, warn.
-    print("  (no lockfile found or hash-verified install failed — installing without hash pinning)")
-    cmd = [str(pip_bin), "install", *packages]
+    print(f"  using lockfile constraints: {lockfile.name}")
+    cmd = [
+        str(pip_bin),
+        "install",
+        "--require-hashes",
+        "--constraint",
+        str(lockfile),
+        *packages,
+    ]
     try:
         proc = subprocess.run(cmd, env=env, check=False, timeout=_PIP_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
@@ -241,7 +206,12 @@ def _check_and_install_runtime_deps() -> int:
 # - RuntimeDirectory=lexaloud + RuntimeDirectoryMode=0700 creates the
 #   parent dir for the daemon's Unix domain socket with the correct
 #   permissions; systemd cleans it up on service stop
-# - After=default.target only (sound.target isn't in the user manager)
+# - No explicit After= line: `WantedBy=default.target` already implies an
+#   ordering edge, and units may not declare both WantedBy= and After= on
+#   the same target — that combination creates an ordering cycle that
+#   systemd resolves by dropping edges non-deterministically, which can
+#   delay or reorder dependent units (e.g. the overlay unit's
+#   `After=lexaloud.service`).
 def _load_systemd_template() -> str:
     return (
         files("lexaloud.templates").joinpath("systemd.service.template").read_text(encoding="utf-8")
@@ -354,13 +324,9 @@ def run_setup(force: bool = False) -> int:
             "so it won't leak into the Python environment.",
         )
 
-    print(f"\nModel cache: {default_cache_dir()}")
-    try:
-        ensure_artifacts(download_if_missing=True)
-        print("  models present and verified.")
-    except Exception as e:  # noqa: BLE001
-        print(f"  model download/verify failed: {e}", file=sys.stderr)
-        return EXIT_GENERIC_ERROR
+    provider = load_config().provider
+    print(f"\nKokoro server: {provider.endpoint}")
+    print("  Lexaloud will use this server; no local model download is required.")
 
     unit_dir = _systemd_user_dir()
     unit_path = unit_dir / "lexaloud.service"

@@ -1,6 +1,5 @@
 [Unit]
 Description=Lexaloud TTS daemon
-After=default.target
 
 [Service]
 Type=simple

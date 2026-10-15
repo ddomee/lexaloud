@@ -9,7 +9,7 @@ Subcommands:
     lexaloud skip
     lexaloud back
     lexaloud status
-    lexaloud download-models
+    lexaloud download-models --llm
     lexaloud setup
     lexaloud daemon             # run the FastAPI daemon
 
@@ -268,25 +268,15 @@ def cmd_status(args) -> int:
 
 
 def cmd_download_models(args) -> int:
-    """Fetch model artifacts into ~/.cache/lexaloud/models/.
+    """Download the optional local LLM normalizer model.
 
-    Idempotent — skips files that already pass the SHA256 check.
+    Kokoro is served externally and therefore has no Lexaloud model artifact
+    to download.
     """
-    from .models import ensure_artifacts
-
-    try:
-        paths = ensure_artifacts(download_if_missing=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"model download failed: {e}", file=sys.stderr)
-        return EXIT_GENERIC_ERROR
-    for name, path in paths.items():
-        print(f"{name} -> {path}")
-
     if getattr(args, "llm", False) or getattr(args, "all", False):
-        result = _download_llm_model()
-        if result != EXIT_OK:
-            return result
+        return _download_llm_model()
 
+    print("Kokoro is provided by the configured local HTTP server; nothing to download.")
     return EXIT_OK
 
 
@@ -392,7 +382,7 @@ def _download_llm_model() -> int:
 
 
 def cmd_setup(args) -> int:
-    """Run post-install setup: download models, render systemd unit, print hotkey walkthrough."""
+    """Run post-install setup and render the systemd unit and hotkey walkthrough."""
     from .setup import run_setup
 
     return run_setup(force=args.force)
@@ -451,11 +441,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp = sub.add_parser(name, help=f"{name}")
         sp.set_defaults(func=handler)
 
-    sp = sub.add_parser("download-models", help="fetch model artifacts")
+    sp = sub.add_parser("download-models", help="fetch the optional LLM normalizer model")
     sp.add_argument(
         "--llm", action="store_true", help="also download the LLM normalizer model (~1 GB)"
     )
-    sp.add_argument("--all", action="store_true", help="download all models (Kokoro + LLM)")
+    sp.add_argument("--all", action="store_true", help="alias for --llm (kept for compatibility)")
     sp.set_defaults(func=cmd_download_models)
 
     sp = sub.add_parser("setup", help="run first-time setup (post-install)")

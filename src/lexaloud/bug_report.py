@@ -8,7 +8,6 @@ report. Collects:
 - daemon /state output (over the Unix domain socket)
 - daemon last_error from /state
 - last ~200 lines of `journalctl --user -u lexaloud.service`
-- presence + SHA256 of the installed model artifacts
 - sanitized config.toml contents
 
 Redaction is on by default:
@@ -122,21 +121,8 @@ def _get_journalctl_tail(n: int = 200) -> str:
 
 
 def _get_model_cache_info() -> list[str]:
-    """Return one line per expected artifact reporting present/absent + size."""
-    from .models import ARTIFACTS, default_cache_dir
-
-    cache = default_cache_dir()
-    lines: list[str] = []
-    for art in ARTIFACTS:
-        p = cache / art.filename
-        if p.is_file():
-            size = p.stat().st_size
-            lines.append(
-                f"- `{art.filename}`: present ({size} bytes, expected ~{art.expected_size})"
-            )
-        else:
-            lines.append(f"- `{art.filename}`: **MISSING**")
-    return lines
+    """Report that speech models are external without inspecting user files."""
+    return ["- Speech synthesis uses the configured loopback Kokoro server."]
 
 
 def _get_config_contents(redact: bool) -> str:

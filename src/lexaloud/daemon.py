@@ -38,11 +38,10 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .audio import AudioSink, SoundDeviceSink
 from .config import Config, load_config, runtime_dir, socket_path
-from .models import assert_onnxruntime_environment, ensure_artifacts
 from .player import Player, PlayerState
 from .preprocessor import PreprocessorConfig, preprocess_with_llm
 from .providers.base import SpeechProvider
-from .providers.kokoro import KokoroProvider
+from .providers.kokoro_http import KokoroHttpProvider
 
 log = logging.getLogger(__name__)
 
@@ -89,26 +88,18 @@ class DaemonComponents:
 def build_components(cfg: Config | None = None) -> DaemonComponents:
     cfg = cfg or load_config()
 
-    # Runtime guard: refuse to start if the ONNX Runtime environment is broken.
-    assert_onnxruntime_environment()
-
-    artifacts = ensure_artifacts(download_if_missing=False)
-    provider = KokoroProvider(
-        model_path=artifacts["kokoro-v1.0.onnx"],
-        voices_path=artifacts["voices-v1.0.bin"],
+    provider = KokoroHttpProvider(
+        endpoint=cfg.provider.endpoint,
+        model=cfg.provider.model,
         voice=cfg.provider.voice,
-        lang=cfg.provider.lang,
         speed=cfg.provider.speed,
+        timeout_s=cfg.provider.timeout_s,
     )
     sink: AudioSink = SoundDeviceSink()
     player = Player(provider=provider, sink=sink, ready_queue_depth=cfg.daemon.ready_queue_depth)
     preproc_config = PreprocessorConfig(
         dedupe_mathjax_selection=cfg.preprocessor.dedupe_mathjax_selection,
         strip_markdown=cfg.preprocessor.strip_markdown,
-        sre_latex_enabled=cfg.sre_latex.enabled,
-        sre_latex_timeout_s=cfg.sre_latex.timeout_s,
-        sre_latex_domain=cfg.sre_latex.domain,
-        sre_latex_style=cfg.sre_latex.style,
         strip_numeric_bracket_citations=cfg.preprocessor.strip_numeric_bracket_citations,
         strip_parenthetical_citations=cfg.preprocessor.strip_parenthetical_citations,
         expand_latin_abbreviations=cfg.preprocessor.expand_latin_abbreviations,
@@ -220,6 +211,9 @@ def create_app(components: DaemonComponents | None = None) -> FastAPI:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
             await comps.player.shutdown()
+            close_provider = getattr(comps.provider, "aclose", None)
+            if close_provider is not None:
+                await close_provider()
             if comps.normalizer is not None:
                 comps.normalizer.shutdown()
             exec_pool.shutdown(wait=False, cancel_futures=True)

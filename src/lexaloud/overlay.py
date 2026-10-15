@@ -75,12 +75,12 @@ from .platform import detect_desktop  # noqa: E402
 # --- constants ------------------------------------------------------------
 
 POLL_INTERVAL_MS = 200
-BAR_WIDTH = 500
-BAR_HEIGHT = 80
+BAR_WIDTH = 900
+BAR_HEIGHT = 140
 CORNER_RADIUS = 16
 BG_RGBA = (0.1, 0.1, 0.1, 0.85)
-TEXT_COLOR_RGBA = (1.0, 1.0, 1.0, 1.0)
-BUTTON_TEXT_COLOR = (1.0, 1.0, 1.0, 0.9)
+TEXT_COLOR_RGBA = (0.95, 0.83, 0.67, 1.0)
+BUTTON_TEXT_COLOR = (0.92, 0.71, 0.43, 1.0)
 BOTTOM_MARGIN = 24
 
 # Unicode button labels
@@ -93,20 +93,23 @@ LABEL_STOP = "\u23f9"  # ⏹
 
 _CSS = b"""
 .overlay-label {
-    font-size: 14px;
-    font-weight: 500;
+    color: #f2d4ab;
+    font-size: 28px;
+    font-weight: 600;
 }
 .overlay-btn {
     background: transparent;
     border: none;
     box-shadow: none;
+    color: #ebb66e;
     padding: 4px 10px;
     min-width: 0;
     min-height: 0;
     font-size: 20px;
 }
 .overlay-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(235, 182, 110, 0.20);
+    color: #ffe0ad;
     border-radius: 6px;
 }
 """
@@ -229,9 +232,10 @@ class OverlayWindow(Gtk.Window):
         # Sentence label — takes most of the width.
         self._label = Gtk.Label(label="")
         self._label.set_xalign(0.0)
-        self._label.set_ellipsize(3)  # Pango.EllipsizeMode.END = 3
-        self._label.set_max_width_chars(50)
-        self._label.set_line_wrap(False)
+        self._label.set_ellipsize(0)  # Pango.EllipsizeMode.NONE = 0
+        self._label.set_max_width_chars(80)
+        self._label.set_line_wrap(True)
+        self._label.set_lines(2)
         self._label.get_style_context().add_class("overlay-label")
         main_box.pack_start(self._label, True, True, 0)
 
